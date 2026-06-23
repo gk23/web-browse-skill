@@ -90,7 +90,8 @@ def fetch_via_headless(url: str, timeout: int = 30) -> tuple:
     
     driver = None
     try:
-        driver = create_driver(headless=True)
+        _profile_dir = os.path.expanduser("~/.web_skill_cache/brave_profile")
+        driver = create_driver(headless=True, user_data_dir=_profile_dir)
         driver.get(url)
         
         # 等待页面加载
@@ -152,7 +153,8 @@ def fetch_via_headless_with_cookies(url: str, timeout: int = 30) -> tuple:
     driver = None
     try:
         # 先访问域名设置 cookies
-        driver = create_driver(headless=True)
+        _profile_dir = os.path.expanduser("~/.web_skill_cache/brave_profile")
+        driver = create_driver(headless=True, user_data_dir=_profile_dir)
         driver.get(f"https://{domain}")
         time.sleep(1)
         
@@ -593,7 +595,9 @@ def fetch_via_interactive(url: str, timeout: int = 120, task_hint: str = "", kee
     
     driver = None
     try:
-        driver = create_driver(headless=False)
+        # 使用固定的 user_data_dir 以持久化 profile（cookie/localStorage 等）
+        _profile_dir = os.path.expanduser("~/.web_skill_cache/brave_profile")
+        driver = create_driver(headless=False, user_data_dir=_profile_dir)
         
         # 先访问域名首页以加载 cookies
         domain = get_domain(url)
