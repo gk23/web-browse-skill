@@ -576,7 +576,7 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
         time.sleep(1.5)
 
 
-def fetch_via_interactive(url: str, timeout: int = 120, task_hint: str = "") -> Optional[str]:
+def fetch_via_interactive(url: str, timeout: int = 120, task_hint: str = "", keep_open: bool = False) -> Optional[str]:
     """
     人工交互模式：打开有头浏览器，等待用户完成登录/验证码
     
@@ -716,11 +716,13 @@ def fetch_via_interactive(url: str, timeout: int = 120, task_hint: str = "") -> 
         print(f"[模式3] 执行失败: {e}")
         return None
     finally:
-        if driver:
+        if driver and not keep_open:
             try:
                 driver.quit()
             except Exception:
                 pass
+        elif driver:
+            print("[模式3] 浏览器保持打开（keep_open=True）")
 
 
 # ============================================================================
@@ -785,7 +787,8 @@ def smart_fetch(
     mode: str = "auto",
     output_format: str = "html",
     timeout: int = 30,
-    task_hint: str = ""
+    task_hint: str = "",
+    keep_open: bool = False
 ) -> Dict[str, Any]:
     """
     智能获取网页内容
@@ -839,7 +842,7 @@ def smart_fetch(
                     if html:
                         mode_used = 'headless'
             elif hist_mode == 'interactive':
-                html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint)
+                html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint, keep_open=keep_open)
                 if html:
                     mode_used = 'interactive'
             
@@ -880,14 +883,14 @@ def smart_fetch(
                 # 如果检测到需要登录，且 interactive 在尝试列表中
                 if needs_login and 'interactive' in modes_to_try:
                     print("[调度] 检测到登录需求，跳转到交互模式...")
-                    html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint)
+                    html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint, keep_open=keep_open)
                     if html and has_core_content(html):
                         mode_used = 'interactive'
                         record_success(url, 'interactive', "需要登录或验证码验证")
                         break
             
             elif try_mode == 'interactive':
-                html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint)
+                html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint, keep_open=keep_open)
                 if html and has_core_content(html):
                     mode_used = 'interactive'
                     record_success(url, 'interactive', "需要登录或验证码验证")
