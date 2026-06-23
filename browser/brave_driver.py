@@ -16,7 +16,9 @@ Brave 浏览器 WebDriver 封装
 """
 
 import os
+import json
 import atexit
+import tempfile
 from typing import Optional
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -43,6 +45,38 @@ def _cleanup_active_driver():
 
 # 注册退出清理
 atexit.register(_cleanup_active_driver)
+
+
+def _disable_brave_p3a_popup(user_data_dir: str):
+    """
+    在 Brave 启动前，预写 Local State 文件以禁用 P3A 隐私分析弹窗。
+
+    Brave 在启动时读取 user-data-dir 中的 Local State 文件，
+    检查 brave_stats.reporting_enabled 是否为 true 来决定是否弹出提示。
+    提前写入 false 即可跳过弹窗。
+    """
+    from pathlib import Path
+
+    local_state_path = Path(user_data_dir) / "Local State"
+    if local_state_path.exists():
+        # 如果文件已存在（使用持久化 user_data_dir），追加/覆盖 P3A 设置
+        try:
+            existing = json.loads(local_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+    else:
+        existing = {}
+
+    # 覆盖 Brave 隐私分析相关配置（兼容新旧键名）
+    existing.setdefault("browser", {})
+    existing.setdefault("brave", {})
+    existing["brave"].setdefault("stats", {})["reporting_enabled"] = False
+    # 新版本 Brave 使用 p3a 键
+    existing.setdefault("p3a", {})["enabled"] = False
+
+    # 确保目录存在并写入
+    local_state_path.parent.mkdir(parents=True, exist_ok=True)
+    local_state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
 def create_driver(headless: bool = False, user_data_dir: str = None) -> webdriver.Chrome:
@@ -78,15 +112,20 @@ def create_driver(headless: bool = False, user_data_dir: str = None) -> webdrive
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-extensions")
-    # 禁用 Brave P3A 隐私分析弹窗
-    options.add_argument("--disable-brave-stats-updater")
 
     if headless:
         options.add_argument("--headless=new")
 
-    # 用户数据目录（复用 profile/cookies）
-    if user_data_dir:
-        options.add_argument(f"--user-data-dir={user_data_dir}")
+    # ── 用户数据目录 + Brave P3A 弹窗禁用 ──
+    _temp_data_dir = None
+    if not user_data_dir:
+        _temp_data_dir = tempfile.mkdtemp(prefix="brave_profile_")
+        user_data_dir = _temp_data_dir
+
+    # 在 Brave 启动前，预写 Local State 文件以禁用 P3A 隐私分析弹窗
+    _disable_brave_p3a_popup(user_data_dir)
+
+    options.add_argument(f"--user-data-dir={user_data_dir}")
 
     # User-Agent
     options.add_argument(
