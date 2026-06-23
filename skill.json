@@ -1,0 +1,28 @@
+{
+  "name": "web-browse",
+  "description": "通用网页浏览工具，支持任意 URL 的内容获取。自动处理静态页面、JS渲染页面和需要登录的页面。",
+  "parameters": {
+    "url": {
+      "type": "string",
+      "description": "目标网页 URL",
+      "required": true
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["auto", "web_fetch", "headless", "interactive"],
+      "description": "获取模式：auto=自动选择（默认）",
+      "default": "auto"
+    },
+    "output_format": {
+      "type": "string",
+      "enum": ["html", "markdown", "text"],
+      "description": "输出格式",
+      "default": "html"
+    },
+    "timeout": {
+      "type": "integer",
+      "description": "超时时间（秒）",
+      "default": 30
+    }
+  }
+}
