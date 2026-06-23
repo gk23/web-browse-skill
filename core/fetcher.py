@@ -218,115 +218,167 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
 
     banner_js = f'''
     (function() {{
-        var old = document.getElementById('__wb_login_banner__');
-        if (old) old.remove();
-
-        var banner = document.createElement('div');
-        banner.id = '__wb_login_banner__';
-        banner.innerHTML =
-            '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px 8px 6px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;flex-wrap:wrap;width:100%;">' +
-                '<div id="__wb_drag_handle__" style="cursor:grab;padding:2px 4px;user-select:none;display:flex;align-items:center;flex-shrink:0;" title="拖拽移动横幅">' +
-                    '<span style="font-size:16px;line-height:1;color:#c0a030;">⋮⋮</span>' +
-                '</div>' +
-                '<span style="font-size:18px;">{icon_text}</span>' +
-                '<div style="text-align:center;">' +
-                    '<div style="font-weight:bold;font-size:13px;color:#333;">{title_text}</div>' +
-                    '<div style="font-size:11px;color:#888;">{hint_text}</div>' +
-                '</div>' +
-                '<div style="display:flex;gap:8px;">' +
-                    '<button id="__wb_btn_done__" style="padding:5px 16px;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;background:#07c160;color:#fff;box-shadow:0 2px 6px rgba(7,193,96,0.3);">✅ 完成登录</button>' +
-                    '<button id="__wb_btn_fail__" style="padding:5px 12px;border:1px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer;background:#fff;color:#666;">❌ 未完成</button>' +
-                '</div>' +
-                '<span id="__wb_countdown__" style="font-size:12px;color:#e74c3c;font-weight:bold;font-variant-numeric:tabular-nums;min-width:90px;text-align:center;"></span>' +
-            '</div>';
-        banner.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;min-width:320px;background:linear-gradient(135deg,#fffbeb,#fff7cd);border-bottom:2px solid #f59e0b;border-right:2px solid #f59e0b;border-radius:0 0 8px 0;box-shadow:0 2px 12px rgba(0,0,0,0.12);';
-
-        document.body.insertBefore(banner, document.body.firstChild);
-
-        // ========== 拖拽功能 ==========
-        var dragHandle = document.getElementById('__wb_drag_handle__');
-        var isDragging = false;
-        var dragStartX, dragStartY, bannerStartX, bannerStartY;
-
-        dragHandle.addEventListener('mousedown', function(e) {{
-            isDragging = true;
-            dragStartX = e.clientX;
-            dragStartY = e.clientY;
-            bannerStartX = banner.offsetLeft;
-            bannerStartY = banner.offsetTop;
-            dragHandle.style.cursor = 'grabbing';
-            banner.style.transition = 'none';
-            e.preventDefault();
-        }});
-
-        document.addEventListener('mousemove', function(e) {{
-            if (!isDragging) return;
-            var dx = e.clientX - dragStartX;
-            var dy = e.clientY - dragStartY;
-            var newX = bannerStartX + dx;
-            var newY = bannerStartY + dy;
-            // 限制在可视区域内
-            newX = Math.max(0, Math.min(newX, window.innerWidth - banner.offsetWidth));
-            newY = Math.max(0, Math.min(newY, window.innerHeight - banner.offsetHeight));
-            banner.style.left = newX + 'px';
-            banner.style.top = newY + 'px';
-        }});
-
-        document.addEventListener('mouseup', function() {{
-            if (isDragging) {{
-                isDragging = false;
-                dragHandle.style.cursor = 'grab';
-                banner.style.transition = '';
-            }}
-        }});
-
-        // 双击拖拽把手回到原位
-        dragHandle.addEventListener('dblclick', function() {{
-            banner.style.top = '0';
-            banner.style.left = '0';
-            banner.style.transition = 'top 0.3s ease, left 0.3s ease';
-            setTimeout(function() {{ banner.style.transition = ''; }}, 350);
-        }});
-
-        // ========== 按钮状态标志（Python 端检测） ==========
-        window.__wb_login_done__ = false;
-        window.__wb_login_failed__ = false;
-
-        document.getElementById('__wb_btn_done__').addEventListener('click', function() {{
-            window.__wb_login_done__ = true;
-            window.__wb_login_failed__ = false;
-            this.style.background = '#06b050';
-            this.textContent = '✅ 已确认';
-            document.getElementById('__wb_btn_fail__').style.opacity = '0.5';
-        }});
-
-        document.getElementById('__wb_btn_fail__').addEventListener('click', function() {{
-            window.__wb_login_failed__ = true;
+        // 按钮状态保持在 window 上（SPA 导航不会丢失）
+        if (typeof window.__wb_login_done__ === 'undefined') {{
             window.__wb_login_done__ = false;
-            this.style.background = '#fef2f2';
-            this.style.borderColor = '#fca5a5';
-            this.textContent = '❌ 已放弃';
-            document.getElementById('__wb_btn_done__').style.opacity = '0.5';
-        }});
+            window.__wb_login_failed__ = false;
+        }}
+        if (typeof window.__wb_countdown_remaining__ === 'undefined') {{
+            window.__wb_countdown_remaining__ = {timeout};
+        }}
+        if (window.__wb_banner_timer__) {{
+            clearInterval(window.__wb_banner_timer__);
+        }}
 
-        // 倒计时
-        var remaining = {timeout};
-        var countdownEl = document.getElementById('__wb_countdown__');
-        var timer = setInterval(function() {{
-            remaining--;
-            if (remaining <= 0) {{
-                clearInterval(timer);
-                if (countdownEl) countdownEl.textContent = '⏰';
-                return;
+        function __wb_create_banner() {{
+            // 如果已存在则跳过
+            if (document.getElementById('__wb_login_banner__')) return;
+
+            var banner = document.createElement('div');
+            banner.id = '__wb_login_banner__';
+            banner.innerHTML =
+                '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px 8px 6px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;flex-wrap:wrap;width:100%;">' +
+                    '<div id="__wb_drag_handle__" style="cursor:grab;padding:2px 4px;user-select:none;display:flex;align-items:center;flex-shrink:0;" title="拖拽移动横幅">' +
+                        '<span style="font-size:16px;line-height:1;color:#c0a030;">⋮⋮</span>' +
+                    '</div>' +
+                    '<span style="font-size:18px;">{icon_text}</span>' +
+                    '<div style="text-align:center;">' +
+                        '<div style="font-weight:bold;font-size:13px;color:#333;">{title_text}</div>' +
+                        '<div style="font-size:11px;color:#888;">{hint_text}</div>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:8px;">' +
+                        '<button id="__wb_btn_done__" style="padding:5px 16px;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;background:#07c160;color:#fff;box-shadow:0 2px 6px rgba(7,193,96,0.3);">✅ 完成登录</button>' +
+                        '<button id="__wb_btn_fail__" style="padding:5px 12px;border:1px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer;background:#fff;color:#666;">❌ 未完成</button>' +
+                    '</div>' +
+                    '<span id="__wb_countdown__" style="font-size:12px;color:#e74c3c;font-weight:bold;font-variant-numeric:tabular-nums;min-width:90px;text-align:center;"></span>' +
+                '</div>';
+            banner.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;min-width:320px;background:linear-gradient(135deg,#fffbeb,#fff7cd);border-bottom:2px solid #f59e0b;border-right:2px solid #f59e0b;border-radius:0 0 8px 0;box-shadow:0 2px 12px rgba(0,0,0,0.12);';
+            document.body.insertBefore(banner, document.body.firstChild);
+
+            // ===== 拖拽功能 =====
+            var dragHandle = document.getElementById('__wb_drag_handle__');
+            var isDragging = false;
+            var dragStartX, dragStartY, bannerStartX, bannerStartY;
+
+            dragHandle.addEventListener('mousedown', function(e) {{
+                isDragging = true;
+                dragStartX = e.clientX;
+                dragStartY = e.clientY;
+                bannerStartX = banner.offsetLeft;
+                bannerStartY = banner.offsetTop;
+                dragHandle.style.cursor = 'grabbing';
+                banner.style.transition = 'none';
+                e.preventDefault();
+            }});
+
+            document.addEventListener('mousemove', function(e) {{
+                if (!isDragging) return;
+                var dx = e.clientX - dragStartX;
+                var dy = e.clientY - dragStartY;
+                var newX = bannerStartX + dx;
+                var newY = bannerStartY + dy;
+                newX = Math.max(0, Math.min(newX, window.innerWidth - banner.offsetWidth));
+                newY = Math.max(0, Math.min(newY, window.innerHeight - banner.offsetHeight));
+                banner.style.left = newX + 'px';
+                banner.style.top = newY + 'px';
+            }});
+
+            document.addEventListener('mouseup', function() {{
+                if (isDragging) {{
+                    isDragging = false;
+                    dragHandle.style.cursor = 'grab';
+                    banner.style.transition = '';
+                }}
+            }});
+
+            dragHandle.addEventListener('dblclick', function() {{
+                banner.style.top = '0';
+                banner.style.left = '0';
+                banner.style.transition = 'top 0.3s ease, left 0.3s ease';
+                setTimeout(function() {{ banner.style.transition = ''; }}, 350);
+            }});
+
+            // ===== 按钮事件 =====
+            var btnDone = document.getElementById('__wb_btn_done__');
+            var btnFail = document.getElementById('__wb_btn_fail__');
+            // 恢复之前的按钮状态
+            if (window.__wb_login_done__) {{
+                btnDone.style.background = '#06b050';
+                btnDone.textContent = '✅ 已确认';
+                btnFail.style.opacity = '0.5';
             }}
-            var min = Math.floor(remaining / 60);
-            var sec = remaining % 60;
-            var timeStr = min > 0 ? min + '分' + sec + '秒' : sec + '秒';
-            if (countdownEl) {{
-                countdownEl.textContent = '⏱ ' + timeStr;
-                countdownEl.style.color = remaining < 30 ? '#e74c3c' : remaining < 60 ? '#f39c12' : '#666';
+            if (window.__wb_login_failed__) {{
+                btnFail.style.background = '#fef2f2';
+                btnFail.style.borderColor = '#fca5a5';
+                btnFail.textContent = '❌ 已放弃';
+                btnDone.style.opacity = '0.5';
             }}
-        }}, 1000);
+
+            btnDone.addEventListener('click', function() {{
+                window.__wb_login_done__ = true;
+                window.__wb_login_failed__ = false;
+                this.style.background = '#06b050';
+                this.textContent = '✅ 已确认';
+                btnFail.style.opacity = '0.5';
+            }});
+
+            btnFail.addEventListener('click', function() {{
+                window.__wb_login_failed__ = true;
+                window.__wb_login_done__ = false;
+                this.style.background = '#fef2f2';
+                this.style.borderColor = '#fca5a5';
+                this.textContent = '❌ 已放弃';
+                btnDone.style.opacity = '0.5';
+            }});
+
+            // ===== 倒计时（从持久化状态恢复） =====
+            var countdownEl = document.getElementById('__wb_countdown__');
+            window.__wb_banner_timer__ = setInterval(function() {{
+                window.__wb_countdown_remaining__--;
+                var remaining = window.__wb_countdown_remaining__;
+                if (remaining <= 0) {{
+                    clearInterval(window.__wb_banner_timer__);
+                    if (countdownEl) countdownEl.textContent = '⏰';
+                    return;
+                }}
+                var min = Math.floor(remaining / 60);
+                var sec = remaining % 60;
+                var timeStr = min > 0 ? min + '分' + sec + '秒' : sec + '秒';
+                if (countdownEl) {{
+                    countdownEl.textContent = '⏱ ' + timeStr;
+                    countdownEl.style.color = remaining < 30 ? '#e74c3c' : remaining < 60 ? '#f39c12' : '#666';
+                }}
+            }}, 1000);
+        }}
+
+        // ===== 初始创建 =====
+        __wb_create_banner();
+
+        // ===== SPA 导航持久化：每 1.5 秒检查横幅是否被移除，自动重建 =====
+        window.__wb_banner_watchdog__ = setInterval(function() {{
+            if (!document.getElementById('__wb_login_banner__')) {{
+                __wb_create_banner();
+            }}
+        }}, 1500);
+
+        // ===== 监听 URL 变化（popstate/hashchange）立即重建 =====
+        window.addEventListener('popstate', function() {{
+            setTimeout(__wb_create_banner, 300);
+        }});
+        window.addEventListener('hashchange', function() {{
+            setTimeout(__wb_create_banner, 300);
+        }});
+        // 监听 pushState/replaceState（SPA 路由）
+        var _origPush = history.pushState;
+        var _origReplace = history.replaceState;
+        history.pushState = function() {{
+            _origPush.apply(this, arguments);
+            setTimeout(__wb_create_banner, 300);
+        }};
+        history.replaceState = function() {{
+            _origReplace.apply(this, arguments);
+            setTimeout(__wb_create_banner, 300);
+        }};
     }})();
     '''
     try:
@@ -342,7 +394,7 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
     判定优先级：
     1. 用户点击 ✅ 完成登录 → 立即返回 True
     2. 用户点击 ❌ 未完成 → 返回 False
-    3. 自动检测到登录完成 → 返回 True
+    3. 自动检测到登录成功 → 更新横幅提示，继续等待用户确认（不自动关闭浏览器）
     4. 超时 → 返回 True（降级获取当前页面）
 
     Returns:
@@ -353,6 +405,7 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
     last_print = 0
     initial_url = driver.current_url
     initial_content_len = 0
+    _wait_with_countdown._auto_detected = False  # 重置自动检测标志
 
     if is_qrcode:
         try:
@@ -416,7 +469,7 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
         except Exception:
             pass
 
-        # ── 2. 自动检测（辅助）──
+        # ── 2. 自动检测（辅助，不自动关闭）──
         try:
             html = driver.page_source
             current_url = driver.current_url
@@ -426,21 +479,26 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
             content_grown = (len(html) > max(initial_content_len, 1) * 1.5)
 
             if not login_still and content_found and (url_changed or content_grown):
-                print(f"\n🎉 自动检测到登录成功！({int(elapsed)}秒)")
-                try:
-                    driver.execute_script("""
-                        var b = document.getElementById('__wb_login_banner__');
-                        if (b) {
-                            b.style.background = 'linear-gradient(135deg,#ecfdf5,#d1fae5)';
-                            b.style.borderColor = '#10b981';
-                            b.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 20px;font-family:system-ui;">' +
-                                '<span style="font-size:18px;">🎉</span>' +
-                                '<div style="font-weight:bold;font-size:13px;color:#065f46;">自动检测到登录成功！正在提取内容...</div></div>';
-                        }
-                    """)
-                except Exception:
-                    pass
-                return True
+                if not getattr(_wait_with_countdown, '_auto_detected', False):
+                    _wait_with_countdown._auto_detected = True
+                    print(f"\n🎉 自动检测到登录成功！({int(elapsed)}秒)")
+                    print(f"   浏览器保持打开，你可以继续浏览页面")
+                    print(f"   完成后请点击横幅上的「✅ 完成登录」按钮")
+                    try:
+                        driver.execute_script("""
+                            var b = document.getElementById('__wb_login_banner__');
+                            if (b) {
+                                b.style.background = 'linear-gradient(135deg,#ecfdf5,#d1fae5)';
+                                b.style.borderColor = '#10b981';
+                                // 更新提示文字，保留按钮
+                                var titleEl = b.querySelector('div[style] div[style] div:first-child');
+                                if (titleEl) titleEl.textContent = '✅ 已检测到登录成功';
+                                var hintEl = b.querySelector('div[style] div[style] div:first-child + div');
+                                if (hintEl) hintEl.textContent = '可继续浏览，完成后点击下方按钮';
+                            }
+                        """)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
