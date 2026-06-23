@@ -224,7 +224,10 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
         var banner = document.createElement('div');
         banner.id = '__wb_login_banner__';
         banner.innerHTML =
-            '<div style="display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 20px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;flex-wrap:wrap;">' +
+            '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px 8px 6px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;flex-wrap:wrap;width:100%;">' +
+                '<div id="__wb_drag_handle__" style="cursor:grab;padding:2px 4px;user-select:none;display:flex;align-items:center;flex-shrink:0;" title="拖拽移动横幅">' +
+                    '<span style="font-size:16px;line-height:1;color:#c0a030;">⋮⋮</span>' +
+                '</div>' +
                 '<span style="font-size:18px;">{icon_text}</span>' +
                 '<div style="text-align:center;">' +
                     '<div style="font-weight:bold;font-size:13px;color:#333;">{title_text}</div>' +
@@ -236,11 +239,56 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
                 '</div>' +
                 '<span id="__wb_countdown__" style="font-size:12px;color:#e74c3c;font-weight:bold;font-variant-numeric:tabular-nums;min-width:90px;text-align:center;"></span>' +
             '</div>';
-        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:linear-gradient(135deg,#fffbeb,#fff7cd);border-bottom:2px solid #f59e0b;box-shadow:0 2px 12px rgba(0,0,0,0.08);';
+        banner.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;min-width:320px;background:linear-gradient(135deg,#fffbeb,#fff7cd);border-bottom:2px solid #f59e0b;border-right:2px solid #f59e0b;border-radius:0 0 8px 0;box-shadow:0 2px 12px rgba(0,0,0,0.12);';
 
         document.body.insertBefore(banner, document.body.firstChild);
 
-        // 按钮状态标志（Python 端检测）
+        // ========== 拖拽功能 ==========
+        var dragHandle = document.getElementById('__wb_drag_handle__');
+        var isDragging = false;
+        var dragStartX, dragStartY, bannerStartX, bannerStartY;
+
+        dragHandle.addEventListener('mousedown', function(e) {{
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            bannerStartX = banner.offsetLeft;
+            bannerStartY = banner.offsetTop;
+            dragHandle.style.cursor = 'grabbing';
+            banner.style.transition = 'none';
+            e.preventDefault();
+        }});
+
+        document.addEventListener('mousemove', function(e) {{
+            if (!isDragging) return;
+            var dx = e.clientX - dragStartX;
+            var dy = e.clientY - dragStartY;
+            var newX = bannerStartX + dx;
+            var newY = bannerStartY + dy;
+            // 限制在可视区域内
+            newX = Math.max(0, Math.min(newX, window.innerWidth - banner.offsetWidth));
+            newY = Math.max(0, Math.min(newY, window.innerHeight - banner.offsetHeight));
+            banner.style.left = newX + 'px';
+            banner.style.top = newY + 'px';
+        }});
+
+        document.addEventListener('mouseup', function() {{
+            if (isDragging) {{
+                isDragging = false;
+                dragHandle.style.cursor = 'grab';
+                banner.style.transition = '';
+            }}
+        }});
+
+        // 双击拖拽把手回到原位
+        dragHandle.addEventListener('dblclick', function() {{
+            banner.style.top = '0';
+            banner.style.left = '0';
+            banner.style.transition = 'top 0.3s ease, left 0.3s ease';
+            setTimeout(function() {{ banner.style.transition = ''; }}, 350);
+        }});
+
+        // ========== 按钮状态标志（Python 端检测） ==========
         window.__wb_login_done__ = false;
         window.__wb_login_failed__ = false;
 
