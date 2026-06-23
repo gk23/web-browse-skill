@@ -17,6 +17,7 @@ Brave 浏览器 WebDriver 封装
 
 import os
 import atexit
+from typing import Optional
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -26,7 +27,7 @@ BRAVE_PATH = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 CHROMEDRIVER_PATH = os.path.expanduser("~/chromedriver-mac-arm64/chromedriver")
 
 # 全局单例：同一时间只允许一个 WebDriver 控制的 Brave 进程
-_active_driver: webdriver.Chrome | None = None
+_active_driver: Optional[webdriver.Chrome] = None
 
 
 def _cleanup_active_driver():
@@ -109,7 +110,7 @@ def create_driver(headless: bool = False, user_data_dir: str = None) -> webdrive
     return driver
 
 
-def get_active_driver() -> webdriver.Chrome | None:
+def get_active_driver() -> Optional[webdriver.Chrome]:
     """获取当前活跃的 driver 实例（可能为 None）"""
     return _active_driver
 

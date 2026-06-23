@@ -205,8 +205,11 @@ def fetch_via_headless_with_cookies(url: str, timeout: int = 30) -> tuple:
 # 模式3: Interactive (人工交互)
 # ============================================================================
 
-def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
+def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False, task_hint: str = ""):
     """注入登录提示横幅，包含「✅ 完成登录」和「❌ 未完成」双按钮"""
+    # 存储任务提示到 window，供 SPA 导航后重建使用
+    task_hint_js = "null" if not task_hint else f'"{task_hint}"'
+
     if is_qrcode:
         title_text = "请先登录 - 扫码登录"
         hint_text = "扫码 / 密码 / 手机登录均可"
@@ -226,31 +229,51 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
         if (typeof window.__wb_countdown_remaining__ === 'undefined') {{
             window.__wb_countdown_remaining__ = {timeout};
         }}
+        // 存储任务提示到 window，供 SPA 导航后重建使用
+        window.__wb_task_hint__ = {task_hint_js};
         if (window.__wb_banner_timer__) {{
             clearInterval(window.__wb_banner_timer__);
         }}
 
+        // 用户已做决定 → 不再创建横幅，也不再轮询
+        function __wb_user_decided() {{
+            return window.__wb_login_done__ || window.__wb_login_failed__;
+        }}
+
         function __wb_create_banner() {{
-            // 如果已存在则跳过
+            // 如果已存在或用户已决定则跳过
             if (document.getElementById('__wb_login_banner__')) return;
+            if (__wb_user_decided()) return;
+
+            var taskHintHtml = '';
+            if (window.__wb_task_hint__) {{
+                taskHintHtml =
+                    '<div style="width:100%;margin:0 -2px;padding:6px 8px;background:rgba(59,130,246,0.1);border:1px dashed #3b82f6;border-radius:6px;text-align:center;">' +
+                        '<span style="font-size:12px;color:#3b82f6;">📋</span> ' +
+                        '<span style="font-weight:bold;font-size:12px;color:#1d4ed8;">' + window.__wb_task_hint__ + '</span>' +
+                    '</div>';
+            }}
 
             var banner = document.createElement('div');
             banner.id = '__wb_login_banner__';
             banner.innerHTML =
-                '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px 8px 6px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;flex-wrap:wrap;width:100%;">' +
-                    '<div id="__wb_drag_handle__" style="cursor:grab;padding:2px 4px;user-select:none;display:flex;align-items:center;flex-shrink:0;" title="拖拽移动横幅">' +
-                        '<span style="font-size:16px;line-height:1;color:#c0a030;">⋮⋮</span>' +
+                '<div style="display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:8px 12px 8px 6px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;width:100%;">' +
+                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+                        '<div id="__wb_drag_handle__" style="cursor:grab;padding:2px 4px;user-select:none;display:flex;align-items:center;flex-shrink:0;" title="拖拽移动横幅">' +
+                            '<span style="font-size:16px;line-height:1;color:#c0a030;">⋮⋮</span>' +
+                        '</div>' +
+                        '<span style="font-size:18px;">{icon_text}</span>' +
+                        '<div style="text-align:center;flex:1;min-width:140px;">' +
+                            '<div style="font-weight:bold;font-size:13px;color:#333;">{title_text}</div>' +
+                            '<div style="font-size:11px;color:#888;">{hint_text}</div>' +
+                        '</div>' +
+                        '<div style="display:flex;gap:8px;">' +
+                            '<button id="__wb_btn_done__" style="padding:5px 16px;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;background:#07c160;color:#fff;box-shadow:0 2px 6px rgba(7,193,96,0.3);">✅ 完成登录</button>' +
+                            '<button id="__wb_btn_fail__" style="padding:5px 12px;border:1px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer;background:#fff;color:#666;">❌ 未完成</button>' +
+                        '</div>' +
+                        '<span id="__wb_countdown__" style="font-size:12px;color:#e74c3c;font-weight:bold;font-variant-numeric:tabular-nums;min-width:90px;text-align:center;"></span>' +
                     '</div>' +
-                    '<span style="font-size:18px;">{icon_text}</span>' +
-                    '<div style="text-align:center;">' +
-                        '<div style="font-weight:bold;font-size:13px;color:#333;">{title_text}</div>' +
-                        '<div style="font-size:11px;color:#888;">{hint_text}</div>' +
-                    '</div>' +
-                    '<div style="display:flex;gap:8px;">' +
-                        '<button id="__wb_btn_done__" style="padding:5px 16px;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer;background:#07c160;color:#fff;box-shadow:0 2px 6px rgba(7,193,96,0.3);">✅ 完成登录</button>' +
-                        '<button id="__wb_btn_fail__" style="padding:5px 12px;border:1px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer;background:#fff;color:#666;">❌ 未完成</button>' +
-                    '</div>' +
-                    '<span id="__wb_countdown__" style="font-size:12px;color:#e74c3c;font-weight:bold;font-variant-numeric:tabular-nums;min-width:90px;text-align:center;"></span>' +
+                    taskHintHtml +
                 '</div>';
             banner.style.cssText = 'position:fixed;top:0;left:0;z-index:2147483647;min-width:320px;background:linear-gradient(135deg,#fffbeb,#fff7cd);border-bottom:2px solid #f59e0b;border-right:2px solid #f59e0b;border-radius:0 0 8px 0;box-shadow:0 2px 12px rgba(0,0,0,0.12);';
             document.body.insertBefore(banner, document.body.firstChild);
@@ -320,6 +343,8 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
                 this.style.background = '#06b050';
                 this.textContent = '✅ 已确认';
                 btnFail.style.opacity = '0.5';
+                // 点击后立即停止看门狗，不再自动重建横幅
+                __wb_stop_watchdog();
             }});
 
             btnFail.addEventListener('click', function() {{
@@ -329,6 +354,8 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
                 this.style.borderColor = '#fca5a5';
                 this.textContent = '❌ 已放弃';
                 btnDone.style.opacity = '0.5';
+                // 点击后立即停止看门狗，不再自动重建横幅
+                __wb_stop_watchdog();
             }});
 
             // ===== 倒计时（从持久化状态恢复） =====
@@ -354,8 +381,25 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
         // ===== 初始创建 =====
         __wb_create_banner();
 
+        // ===== 停止看门狗 =====
+        function __wb_stop_watchdog() {{
+            if (window.__wb_banner_watchdog__) {{
+                clearInterval(window.__wb_banner_watchdog__);
+                window.__wb_banner_watchdog__ = null;
+            }}
+            if (window.__wb_banner_timer__) {{
+                clearInterval(window.__wb_banner_timer__);
+                window.__wb_banner_timer__ = null;
+            }}
+        }}
+
         // ===== SPA 导航持久化：每 1.5 秒检查横幅是否被移除，自动重建 =====
+        // 如果用户已做决定（点击任何按钮），彻底停止轮询
         window.__wb_banner_watchdog__ = setInterval(function() {{
+            if (__wb_user_decided()) {{
+                __wb_stop_watchdog();
+                return;
+            }}
             if (!document.getElementById('__wb_login_banner__')) {{
                 __wb_create_banner();
             }}
@@ -387,7 +431,7 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False):
         print(f"[模式3] 注入横幅失败: {e}")
 
 
-def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool = False) -> bool:
+def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool = False, task_hint: str = "") -> bool:
     """
     等待用户操作：按钮点击（主）+ 自动检测（辅）
 
@@ -425,6 +469,17 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
         if remaining <= 0:
             print("\n⏰ 等待超时！将获取当前页面内容。")
             return True
+
+        # ── 0. 检查横幅是否存在（Python 端兜底，防止 SPA 导航丢失）──
+        try:
+            banner_ok = driver.execute_script(
+                "return !!document.getElementById('__wb_login_banner__');"
+            )
+            if not banner_ok:
+                print("  [保活] 检测到横幅丢失，重新注入...")
+                _inject_banner(driver, url, timeout, is_qrcode, task_hint)
+        except Exception:
+            pass
 
         # ── 1. 按钮状态检测（最高优先级）──
         try:
@@ -521,7 +576,7 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
         time.sleep(1.5)
 
 
-def fetch_via_interactive(url: str, timeout: int = 120) -> Optional[str]:
+def fetch_via_interactive(url: str, timeout: int = 120, task_hint: str = "") -> Optional[str]:
     """
     人工交互模式：打开有头浏览器，等待用户完成登录/验证码
     
@@ -588,11 +643,11 @@ def fetch_via_interactive(url: str, timeout: int = 120) -> Optional[str]:
         print("=" * 60)
 
         # 注入登录提示横幅（根据类型显示不同文案）
-        _inject_banner(driver, url, timeout, is_qrcode=is_qrcode)
+        _inject_banner(driver, url, timeout, is_qrcode=is_qrcode, task_hint=task_hint)
         print("\n浏览器已打开，页面顶部已显示登录提示横幅")
 
         # 带倒计时的等待（按钮驱动 + 自动检测辅助）
-        success = _wait_with_countdown(driver, url, timeout, is_qrcode=is_qrcode)
+        success = _wait_with_countdown(driver, url, timeout, is_qrcode=is_qrcode, task_hint=task_hint)
 
         # 如果用户主动放弃
         if not success:
@@ -729,7 +784,8 @@ def smart_fetch(
     url: str,
     mode: str = "auto",
     output_format: str = "html",
-    timeout: int = 30
+    timeout: int = 30,
+    task_hint: str = ""
 ) -> Dict[str, Any]:
     """
     智能获取网页内容
@@ -783,7 +839,7 @@ def smart_fetch(
                     if html:
                         mode_used = 'headless'
             elif hist_mode == 'interactive':
-                html = fetch_via_interactive(url, timeout=timeout)
+                html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint)
                 if html:
                     mode_used = 'interactive'
             
@@ -824,14 +880,14 @@ def smart_fetch(
                 # 如果检测到需要登录，且 interactive 在尝试列表中
                 if needs_login and 'interactive' in modes_to_try:
                     print("[调度] 检测到登录需求，跳转到交互模式...")
-                    html = fetch_via_interactive(url, timeout=timeout)
+                    html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint)
                     if html and has_core_content(html):
                         mode_used = 'interactive'
                         record_success(url, 'interactive', "需要登录或验证码验证")
                         break
             
             elif try_mode == 'interactive':
-                html = fetch_via_interactive(url, timeout=timeout)
+                html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint)
                 if html and has_core_content(html):
                     mode_used = 'interactive'
                     record_success(url, 'interactive', "需要登录或验证码验证")
