@@ -78,6 +78,8 @@ def create_driver(headless: bool = False, user_data_dir: str = None) -> webdrive
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-extensions")
+    # 禁用 Brave P3A 隐私分析弹窗
+    options.add_argument("--disable-brave-stats-updater")
 
     if headless:
         options.add_argument("--headless=new")
