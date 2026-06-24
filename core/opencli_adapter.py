@@ -10,14 +10,24 @@ opencli 适配器模块（第三层）
 4. 解析 opencli 输出为统一格式
 
 降级条件：opencli 未安装 / Browser Bridge 未连接 / 站点不支持 / 命令执行失败
+特殊返回：
+  AUTH_REQUIRED: exit code 77，需要登录，调度器应直接跳到 interactive 层
 """
 
 import subprocess
 import json
 import shutil
 import re
+import time
 from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse, parse_qs
+
+
+# opencli 特殊 exit code
+EXIT_AUTH_REQUIRED = 77  # 需要登录，应直接降级到 interactive
+
+# opencli 层总超时（秒）
+OPENCLI_TOTAL_TIMEOUT = 20
 
 
 # 域名到 opencli 站点名映射
@@ -121,6 +131,54 @@ def is_browser_bridge_connected() -> bool:
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
+
+
+def check_site_auth_status(site: str) -> Optional[bool]:
+    """
+    检查指定站点在 opencli 中的登录状态
+    
+    通过 `opencli auth status -f yaml` 快速检查。
+    结果缓存 5 分钟避免频繁调用。
+    
+    Returns:
+        True: 已登录
+        False: 未登录
+        None: 无法检测（opencli 不可用 / 站点不在列表 / 检测失败）
+    """
+    if not is_opencli_available():
+        return None
+    
+    try:
+        result = subprocess.run(
+            ["opencli", "auth", "status", "-f", "yaml"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            return None
+        
+        # 解析 yaml 输出，查找目标站点
+        import yaml
+        status_list = yaml.safe_load(result.stdout)
+        if not isinstance(status_list, list):
+            return None
+        
+        for entry in status_list:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("site") == site:
+                logged_in = entry.get("logged_in")
+                if logged_in is True:
+                    return True
+                elif logged_in is False:
+                    return False
+                # unknown / skipped → None
+                return None
+        
+        # 站点不在 auth status 列表中
+        return None
+        
+    except Exception:
+        return None
 
 
 def get_site_name(url: str) -> Optional[str]:
@@ -254,12 +312,17 @@ def fetch_via_opencli(
         url: 目标 URL
         keyword: 搜索关键词（可选）
         output_format: 输出格式 (json/yaml/table/md/plain)
-        timeout: 超时时间
+        timeout: 单次命令超时时间
     
     Returns:
-        {"success": True, "content": ..., "mode_used": "opencli", ...}
-        或 None（opencli 不可用或失败）
+        {"success": True, "content": ..., "mode_used": "opencli", ...}  — 成功
+        {"success": False, "auth_required": True, ...}                  — 需要登录，调度器应跳到 interactive
+        None                                                            — opencli 不可用或其他失败
+    
+    总耗时控制：不超过 OPENCLI_TOTAL_TIMEOUT (20秒)
+    重试策略：空结果最多重试1次（加 -v），exit code 77 直接返回 AUTH_REQUIRED
     """
+    start_time = time.time()
     print(f"\n[模式3] opencli: {url}")
     
     # ── 前置检查 ──
@@ -278,6 +341,17 @@ def fetch_via_opencli(
         print("[模式3] 无法推断 opencli 命令，跳过")
         return None
     
+    # ── auth status 前置检查：如果站点明确未登录，直接跳过 ──
+    site = action.get("site")
+    if site and site != "web":
+        auth_status = check_site_auth_status(site)
+        if auth_status is False:
+            print(f"[模式3] auth status: {site} 未登录，直接降级到 interactive")
+            return {"success": False, "auth_required": True, "mode_used": "opencli", "url": url}
+        elif auth_status is True:
+            print(f"[模式3] auth status: {site} 已登录，继续执行")
+        # None = 无法检测，继续尝试
+    
     # ── 构建命令 ──
     cmd = ["opencli", action["site"]]
     if action["action"] not in ("read",):
@@ -285,14 +359,26 @@ def fetch_via_opencli(
     cmd.extend(action["args"])
     cmd.extend(["-f", output_format])
     
+    # 计算剩余可用时间
+    def remaining_timeout():
+        return max(5, OPENCLI_TOTAL_TIMEOUT - int(time.time() - start_time))
+    
     print(f"[模式3] 执行命令: {' '.join(cmd)}")
     
-    # ── 执行命令 ──
+    # ── 第一次执行 ──
     try:
         result = subprocess.run(
             cmd,
-            capture_output=True, text=True, timeout=timeout
+            capture_output=True, text=True, timeout=remaining_timeout()
         )
+        
+        # exit code 77 → AUTH_REQUIRED，直接降级
+        if result.returncode == EXIT_AUTH_REQUIRED:
+            stderr = result.stderr.strip() if result.stderr else ""
+            print(f"[模式3] exit code 77 (AUTH_REQUIRED)，需要登录，直接降级到 interactive")
+            if stderr:
+                print(f"[模式3] 错误信息: {stderr[:200]}")
+            return {"success": False, "auth_required": True, "mode_used": "opencli", "url": url}
         
         if result.returncode != 0:
             stderr = result.stderr.strip() if result.stderr else ""
@@ -304,12 +390,71 @@ def fetch_via_opencli(
         # ── 解析输出 ──
         raw_output = result.stdout.strip()
         if not raw_output:
-            print("[模式3] opencli 返回空内容")
+            print("[模式3] opencli 返回空内容，尝试加 -v 重试...")
+        else:
+            content = _parse_opencli_output(raw_output, output_format)
+            
+            # 提取标题
+            title = f"{action['site']} {action['action']}"
+            if isinstance(content, dict):
+                title = content.get("title", title)
+            elif isinstance(content, list) and content:
+                first = content[0]
+                if isinstance(first, dict):
+                    title = first.get("title", title)
+            
+            elapsed = int(time.time() - start_time)
+            print(f"[模式3] opencli 成功获取内容 (长度: {len(raw_output)}, 耗时: {elapsed}秒)")
+            
+            return {
+                "success": True,
+                "content": content,
+                "mode_used": "opencli",
+                "url": url,
+                "title": title,
+                "raw_output": raw_output
+            }
+        
+    except subprocess.TimeoutExpired:
+        print(f"[模式3] opencli 执行超时")
+        return None
+    except FileNotFoundError:
+        print("[模式3] opencli 命令未找到")
+        return None
+    except Exception as e:
+        print(f"[模式3] opencli 执行异常: {e}")
+        return None
+    
+    # ── 第二次执行：加 -v 重试（仅空结果时）──
+    if time.time() - start_time >= OPENCLI_TOTAL_TIMEOUT - 3:
+        print("[模式3] 剩余时间不足，跳过重试")
+        return None
+    
+    retry_cmd = cmd + ["-v"]
+    print(f"[模式3] 重试命令: {' '.join(retry_cmd)}")
+    
+    try:
+        result = subprocess.run(
+            retry_cmd,
+            capture_output=True, text=True, timeout=remaining_timeout()
+        )
+        
+        # exit code 77 → AUTH_REQUIRED
+        if result.returncode == EXIT_AUTH_REQUIRED:
+            print(f"[模式3] 重试: exit code 77 (AUTH_REQUIRED)，直接降级到 interactive")
+            return {"success": False, "auth_required": True, "mode_used": "opencli", "url": url}
+        
+        if result.returncode != 0:
+            print(f"[模式3] 重试失败 (exit={result.returncode})")
+            return None
+        
+        raw_output = result.stdout.strip()
+        if not raw_output:
+            print("[模式3] 重试仍返回空内容，降级")
             return None
         
         content = _parse_opencli_output(raw_output, output_format)
         
-        # 提取标题
         title = f"{action['site']} {action['action']}"
         if isinstance(content, dict):
             title = content.get("title", title)
@@ -318,7 +463,8 @@ def fetch_via_opencli(
             if isinstance(first, dict):
                 title = first.get("title", title)
         
-        print(f"[模式3] opencli 成功获取内容 (长度: {len(raw_output)})")
+        elapsed = int(time.time() - start_time)
+        print(f"[模式3] 重试成功获取内容 (长度: {len(raw_output)}, 耗时: {elapsed}秒)")
         
         return {
             "success": True,
@@ -330,13 +476,10 @@ def fetch_via_opencli(
         }
         
     except subprocess.TimeoutExpired:
-        print(f"[模式3] opencli 执行超时 ({timeout}秒)")
-        return None
-    except FileNotFoundError:
-        print("[模式3] opencli 命令未找到")
+        print(f"[模式3] 重试超时")
         return None
     except Exception as e:
-        print(f"[模式3] opencli 执行异常: {e}")
+        print(f"[模式3] 重试异常: {e}")
         return None
 
 

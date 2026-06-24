@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-通用网页获取模块 - 五层降级策略
+通用网页获取模块 - 四层降级策略
 
 调度逻辑：
 1. 查历史记录 → 有则直接用
-2. 按优先级 web_fetch → headless → opencli → interactive → system_browser 依次尝试
+2. 按优先级 web_fetch → headless → opencli → interactive 依次尝试
 3. 成功后记录网站+模式+原因
+4. opencli 返回 AUTH_REQUIRED 时直接跳到 interactive
 """
 
 import os
@@ -21,7 +22,8 @@ from selenium.common.exceptions import TimeoutException
 
 from .history import (
     get_domain, load_history, get_site_mode,
-    record_success, record_failure
+    record_success, record_failure,
+    get_url_layer, get_skip_layers_for_url
 )
 from .cookies import save_cookies, load_cookies
 from .detector import detect_login_required, has_core_content, detect_qrcode_login
@@ -220,6 +222,16 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False, task
         title_text = "需要登录 / 验证码验证"
         hint_text = "请在页面中完成登录或验证码验证"
         icon_text = "🔐"
+
+    # 等待 document.body 存在后再注入
+    try:
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return document.body != null")
+        )
+    except Exception:
+        print("[模式3] 等待页面 body 超时，尝试直接注入...")
 
     banner_js = f'''
     (function() {{
@@ -429,8 +441,29 @@ def _inject_banner(driver, url: str, timeout: int, is_qrcode: bool = False, task
     '''
     try:
         driver.execute_script(banner_js)
+        # 验证横幅是否成功注入
+        banner_ok = driver.execute_script(
+            "return !!document.getElementById('__wb_login_banner__');"
+        )
+        if banner_ok:
+            print("[模式3] 横幅注入成功")
+        else:
+            print("[模式3] 横幅注入后未检测到元素，可能被页面 CSP 阻止")
     except Exception as e:
         print(f"[模式3] 注入横幅失败: {e}")
+        # 重试一次
+        try:
+            time.sleep(1)
+            driver.execute_script(banner_js)
+            banner_ok = driver.execute_script(
+                "return !!document.getElementById('__wb_login_banner__');"
+            )
+            if banner_ok:
+                print("[模式3] 横幅重试注入成功")
+            else:
+                print("[模式3] 横幅重试后仍未检测到元素")
+        except Exception as e2:
+            print(f"[模式3] 横幅重试注入也失败: {e2}")
 
 
 def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool = False, task_hint: str = "") -> bool:
@@ -526,7 +559,7 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
         except Exception:
             pass
 
-        # ── 2. 自动检测（辅助，不自动关闭）──
+        # ── 2. 自动检测（两种场景）──
         try:
             html = driver.page_source
             current_url = driver.current_url
@@ -535,27 +568,42 @@ def _wait_with_countdown(driver, url: str, timeout: int = 120, is_qrcode: bool =
             url_changed = (current_url != initial_url)
             content_grown = (len(html) > max(initial_content_len, 1) * 1.5)
 
-            if not login_still and content_found and (url_changed or content_grown):
+            # 场景A：页面加载后就已经是登录状态（cookie有效，无需操作）
+            # 条件：无登录弹窗 + 有核心内容 + 已等待足够时间让页面稳定
+            already_logged_in = (not login_still and content_found and elapsed > 5)
+            
+            # 场景B：用户刚完成登录操作（URL变化或内容大幅增长）
+            just_logged_in = (not login_still and content_found and (url_changed or content_grown))
+
+            if already_logged_in or just_logged_in:
                 if not getattr(_wait_with_countdown, '_auto_detected', False):
                     _wait_with_countdown._auto_detected = True
-                    print(f"\n🎉 自动检测到登录成功！({int(elapsed)}秒)")
-                    print(f"   浏览器保持打开，你可以继续浏览页面")
-                    print(f"   完成后请点击横幅上的「✅ 完成登录」按钮")
-                    try:
-                        driver.execute_script("""
-                            var b = document.getElementById('__wb_login_banner__');
-                            if (b) {
-                                b.style.background = 'linear-gradient(135deg,#ecfdf5,#d1fae5)';
-                                b.style.borderColor = '#10b981';
-                                // 更新提示文字，保留按钮
-                                var titleEl = b.querySelector('div[style] div[style] div:first-child');
-                                if (titleEl) titleEl.textContent = '✅ 已检测到登录成功';
-                                var hintEl = b.querySelector('div[style] div[style] div:first-child + div');
-                                if (hintEl) hintEl.textContent = '可继续浏览，完成后点击下方按钮';
-                            }
-                        """)
-                    except Exception:
-                        pass
+                    
+                    if already_logged_in and not just_logged_in:
+                        # 场景A：已经是登录状态，自动完成，无需用户操作
+                        print(f"\n🎉 检测到已是登录状态，自动获取内容！({int(elapsed)}秒)")
+                        print(f"   Cookie 有效，无需人工交互")
+                        return True
+                    else:
+                        # 场景B：刚完成登录，保持打开让用户继续浏览
+                        print(f"\n🎉 自动检测到登录成功！({int(elapsed)}秒)")
+                        print(f"   浏览器保持打开，你可以继续浏览页面")
+                        print(f"   完成后请点击横幅上的「✅ 完成登录」按钮")
+                        try:
+                            driver.execute_script("""
+                                var b = document.getElementById('__wb_login_banner__');
+                                if (b) {
+                                    b.style.background = 'linear-gradient(135deg,#ecfdf5,#d1fae5)';
+                                    b.style.borderColor = '#10b981';
+                                    // 更新提示文字，保留按钮
+                                    var titleEl = b.querySelector('div[style] div[style] div:first-child');
+                                    if (titleEl) titleEl.textContent = '✅ 已检测到登录成功';
+                                    var hintEl = b.querySelector('div[style] div[style] div:first-child + div');
+                                    if (hintEl) hintEl.textContent = '可继续浏览，完成后点击下方按钮';
+                                }
+                            """)
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -599,6 +647,8 @@ def fetch_via_interactive(url: str, timeout: int = 120, task_hint: str = "", kee
         _profile_dir = os.path.expanduser("~/.web_skill_cache/brave_profile")
         driver = create_driver(headless=False, user_data_dir=_profile_dir)
         
+        print("[模式3] ✅ Brave 浏览器已启动！")
+        
         # 先访问域名首页以加载 cookies
         domain = get_domain(url)
         cookies = load_cookies(domain)
@@ -619,6 +669,16 @@ def fetch_via_interactive(url: str, timeout: int = 120, task_hint: str = "", kee
         else:
             driver.get(url)
         
+        # 等待页面完全加载（确保 document.body 存在）
+        print("[模式3] 等待页面加载...")
+        try:
+            WebDriverWait(driver, 30).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+        except TimeoutException:
+            print("[模式3] 页面加载超时，继续尝试...")
+        
+        # 额外等待确保 DOM 稳定
         time.sleep(2)
         
         # ── 检测登录类型 ──
@@ -794,27 +854,26 @@ def smart_fetch(
     task_hint: str = "",
     keep_open: bool = False,
     keyword: str = None,
-    system_browser_mode: str = "manual",
     extract_rules: dict = None
 ) -> Dict[str, Any]:
     """
-    智能获取网页内容（五层降级策略）
+    智能获取网页内容（四层降级策略）
     
     调度流程：
     1. 查历史记录 → 有则直接用对应模式
-    2. web_fetch → headless → opencli → interactive → system_browser
-    3. 成功后记录
+    2. web_fetch → headless → opencli → interactive
+    3. opencli 返回 AUTH_REQUIRED → 直接跳到 interactive
+    4. 成功后记录
     
     Args:
         url: 目标 URL
-        mode: 获取模式 ('auto', 'web_fetch', 'headless', 'opencli', 'interactive', 'system_browser')
+        mode: 获取模式 ('auto', 'web_fetch', 'headless', 'opencli', 'interactive')
         output_format: 输出格式 ('html', 'markdown', 'text', 'json')
         timeout: 超时时间（秒）
         task_hint: 任务提示（interactive 模式横幅显示）
         keep_open: 是否保持浏览器打开（interactive 模式）
-        keyword: 搜索关键词（opencli/system_browser 模式使用）
-        system_browser_mode: system_browser 等待方式 ('manual', 'auto')
-        extract_rules: CSS 选择器提取规则（system_browser 模式使用）
+        keyword: 搜索关键词（opencli 模式使用）
+        extract_rules: CSS 选择器提取规则（保留参数，暂未使用）
     
     Returns:
         {
@@ -836,13 +895,17 @@ def smart_fetch(
     html = None
     mode_used = None
     
-    # ---- 1. 查询历史记录（仅在 auto 模式下）----
+    # ---- 1. 查询历史记录，计算跳层（仅在 auto 模式下）----
+    skip_layers = []
     if mode == 'auto':
-        record = get_site_mode(url)
-        if record and record.get('mode') not in ('failed', None):
-            hist_mode = record['mode']
-            print(f"[历史] {domain} -> 模式: {hist_mode}, 原因: {record.get('reason')}")
+        layer_record = get_url_layer(url)
+        if layer_record and layer_record.get('mode') not in ('failed', None):
+            hist_mode = layer_record['mode']
+            skip_layers = layer_record.get('skip_layers', [])
+            match_type = layer_record.get('match_type', 'domain')
+            print(f"[历史] {domain} -> 模式: {hist_mode}, 匹配: {match_type}, 跳过层: {skip_layers}")
             
+            # 直接用历史模式尝试
             if hist_mode == 'web_fetch':
                 html = fetch_via_web(url, timeout=min(timeout, 15))
                 if html:
@@ -866,26 +929,37 @@ def smart_fetch(
                     mode_used = 'interactive'
             elif hist_mode == 'system_browser':
                 from .system_browser import fetch_via_system_browser
-                result = fetch_via_system_browser(
-                    url, keyword=keyword,
-                    system_browser_mode=system_browser_mode,
-                    timeout=timeout, extract_rules=extract_rules
-                )
+                result = fetch_via_system_browser(url, keyword=keyword, timeout=timeout)
                 if result and result.get("success"):
                     return result
             
             if not html:
-                print("[历史] 历史模式失败，重新尝试...")
+                print("[历史] 历史模式失败，从历史模式开始重新降级...")
+                # 历史模式失败时，从历史模式开始降级，而不是从头开始
+                # 这样如果 interactive 失败了，不会再去试 web_fetch
     
-    # ---- 2. 按优先级尝试（五层降级）----
+    # ---- 2. 按优先级尝试（五层降级 + 跳层优化）----
     if not html:
-        modes_to_try = []
+        all_modes = ['web_fetch', 'headless', 'opencli', 'interactive', 'system_browser']
+        
         if mode == 'auto':
-            modes_to_try = ['web_fetch', 'headless', 'opencli', 'interactive', 'system_browser']
+            # 应用跳层：过滤掉历史记录建议跳过的层
+            if skip_layers:
+                modes_to_try = [m for m in all_modes if m not in skip_layers]
+                print(f"[调度] 跳层优化: 跳过 {skip_layers}, 尝试 {modes_to_try}")
+            else:
+                modes_to_try = all_modes[:4]  # auto 默认不包含 system_browser
         else:
             modes_to_try = [mode]
         
+        # AUTH_REQUIRED 标记：opencli 返回需要登录时，跳过中间层直接到 interactive
+        skip_to_interactive = False
+        
         for try_mode in modes_to_try:
+            # 如果标记了跳到 interactive，跳过其他模式
+            if skip_to_interactive and try_mode not in ('interactive', 'system_browser'):
+                continue
+            
             # ── 第一层：web_fetch ──
             if try_mode == 'web_fetch':
                 html = fetch_via_web(url, timeout=min(timeout, 15))
@@ -925,6 +999,13 @@ def smart_fetch(
                 if result and result.get("success"):
                     record_success(url, 'opencli', "CLI结构化访问，秒级获取")
                     return result
+                
+                # AUTH_REQUIRED → 直接跳到 interactive
+                if result and result.get("auth_required"):
+                    print("[调度] opencli 返回 AUTH_REQUIRED，直接跳到 interactive")
+                    skip_to_interactive = True
+                    continue
+                
                 print("[调度] opencli 失败，降级到 interactive 模式")
             
             # ── 第四层：interactive ──
@@ -938,13 +1019,9 @@ def smart_fetch(
             # ── 第五层：system_browser ──
             elif try_mode == 'system_browser':
                 from .system_browser import fetch_via_system_browser
-                result = fetch_via_system_browser(
-                    url, keyword=keyword,
-                    system_browser_mode=system_browser_mode,
-                    timeout=timeout, extract_rules=extract_rules
-                )
+                result = fetch_via_system_browser(url, keyword=keyword, timeout=timeout)
                 if result and result.get("success"):
-                    record_success(url, 'system_browser', "系统浏览器人工交互模式")
+                    record_success(url, 'system_browser', "系统浏览器人工交互")
                     return result
     
     # ---- 3. 构建返回结果 ----

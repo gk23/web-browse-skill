@@ -5,6 +5,8 @@ __pycache__/
 *.log
 *.png
 *.jpg
+*.webp
 dist/
 ~/
 .codebuddy/
+web-articles/

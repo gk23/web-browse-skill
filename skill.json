@@ -1,6 +1,6 @@
 {
   "name": "web-browse",
-  "description": "通用网页浏览工具，支持任意 URL 的内容获取。自动处理静态页面、JS渲染页面、需要登录的页面。五层降级策略：web_fetch → headless → opencli → interactive → system_browser。",
+  "description": "通用网页浏览工具，支持任意 URL 的内容获取。自动处理静态页面、JS渲染页面、需要登录的页面。四层降级策略：web_fetch → headless → opencli → interactive。",
   "parameters": {
     "url": {
       "type": "string",
@@ -9,8 +9,8 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["auto", "web_fetch", "headless", "opencli", "interactive", "system_browser"],
-      "description": "获取模式：auto=自动选择（默认），opencli=CLI结构化访问，interactive=浏览器交互登录，system_browser=系统浏览器人工交互",
+      "enum": ["auto", "web_fetch", "headless", "opencli", "interactive"],
+      "description": "获取模式：auto=自动选择（默认），opencli=CLI结构化访问，interactive=浏览器交互登录",
       "default": "auto"
     },
     "output_format": {
@@ -26,18 +26,22 @@
     },
     "keyword": {
       "type": "string",
-      "description": "搜索关键词（可选，用于 opencli/interactive/system_browser 模式）",
+      "description": "搜索关键词（可选，用于 opencli 模式）",
       "required": false
     },
-    "system_browser_mode": {
+    "task_hint": {
       "type": "string",
-      "enum": ["manual", "auto"],
-      "description": "system_browser 模式的等待方式：manual=手动确认，auto=自动检测（需扩展）",
-      "default": "manual"
+      "description": "任务提示（可选，interactive 模式横幅显示）",
+      "required": false
+    },
+    "keep_open": {
+      "type": "boolean",
+      "description": "是否保持浏览器打开（interactive 模式）",
+      "default": false
     },
     "extract_rules": {
       "type": "object",
-      "description": "内容提取规则，CSS 选择器（可选，用于 system_browser 模式）",
+      "description": "内容提取规则，CSS 选择器（可选，保留参数）",
       "required": false
     }
   }
