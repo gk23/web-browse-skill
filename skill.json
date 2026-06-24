@@ -1,6 +1,6 @@
 {
   "name": "web-browse",
-  "description": "通用网页浏览工具，支持任意 URL 的内容获取。自动处理静态页面、JS渲染页面和需要登录的页面。",
+  "description": "通用网页浏览工具，支持任意 URL 的内容获取。自动处理静态页面、JS渲染页面、需要登录的页面。五层降级策略：web_fetch → headless → opencli → interactive → system_browser。",
   "parameters": {
     "url": {
       "type": "string",
@@ -9,13 +9,13 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["auto", "web_fetch", "headless", "interactive"],
-      "description": "获取模式：auto=自动选择（默认）",
+      "enum": ["auto", "web_fetch", "headless", "opencli", "interactive", "system_browser"],
+      "description": "获取模式：auto=自动选择（默认），opencli=CLI结构化访问，interactive=浏览器交互登录，system_browser=系统浏览器人工交互",
       "default": "auto"
     },
     "output_format": {
       "type": "string",
-      "enum": ["html", "markdown", "text"],
+      "enum": ["html", "markdown", "text", "json"],
       "description": "输出格式",
       "default": "html"
     },
@@ -23,6 +23,22 @@
       "type": "integer",
       "description": "超时时间（秒）",
       "default": 30
+    },
+    "keyword": {
+      "type": "string",
+      "description": "搜索关键词（可选，用于 opencli/interactive/system_browser 模式）",
+      "required": false
+    },
+    "system_browser_mode": {
+      "type": "string",
+      "enum": ["manual", "auto"],
+      "description": "system_browser 模式的等待方式：manual=手动确认，auto=自动检测（需扩展）",
+      "default": "manual"
+    },
+    "extract_rules": {
+      "type": "object",
+      "description": "内容提取规则，CSS 选择器（可选，用于 system_browser 模式）",
+      "required": false
     }
   }
 }

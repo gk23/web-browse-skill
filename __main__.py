@@ -21,13 +21,13 @@ def main():
     parser.add_argument('url', nargs='?', help='目标 URL')
     parser.add_argument(
         '--mode',
-        choices=['auto', 'web_fetch', 'headless', 'interactive'],
+        choices=['auto', 'web_fetch', 'headless', 'opencli', 'interactive', 'system_browser'],
         default='auto',
         help='获取模式 (默认: auto)'
     )
     parser.add_argument(
         '--output-format',
-        choices=['html', 'markdown', 'text'],
+        choices=['html', 'markdown', 'text', 'json'],
         default='html',
         help='输出格式 (默认: html)'
     )
@@ -36,6 +36,13 @@ def main():
         type=int,
         default=30,
         help='超时时间（秒）(默认: 30)'
+    )
+    parser.add_argument('--keyword', help='搜索关键词（opencli/system_browser 模式使用）')
+    parser.add_argument(
+        '--system-browser-mode',
+        choices=['manual', 'auto'],
+        default='manual',
+        help='system_browser 等待方式 (默认: manual)'
     )
     parser.add_argument('--history', action='store_true', help='查看历史记录')
     parser.add_argument('--clear-history', action='store_true', help='清除历史记录')
@@ -76,7 +83,9 @@ def main():
         args.url,
         mode=args.mode,
         output_format=args.output_format,
-        timeout=args.timeout
+        timeout=args.timeout,
+        keyword=args.keyword,
+        system_browser_mode=args.system_browser_mode
     )
     
     if result["success"]:

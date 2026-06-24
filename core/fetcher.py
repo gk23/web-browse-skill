@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-通用网页获取模块 - 三层降级策略
+通用网页获取模块 - 五层降级策略
 
 调度逻辑：
 1. 查历史记录 → 有则直接用
-2. 按优先级 web_fetch → headless → interactive 依次尝试
+2. 按优先级 web_fetch → headless → opencli → interactive → system_browser 依次尝试
 3. 成功后记录网站+模式+原因
 """
 
@@ -792,26 +792,34 @@ def smart_fetch(
     output_format: str = "html",
     timeout: int = 30,
     task_hint: str = "",
-    keep_open: bool = False
+    keep_open: bool = False,
+    keyword: str = None,
+    system_browser_mode: str = "manual",
+    extract_rules: dict = None
 ) -> Dict[str, Any]:
     """
-    智能获取网页内容
+    智能获取网页内容（五层降级策略）
     
     调度流程：
     1. 查历史记录 → 有则直接用对应模式
-    2. web_fetch → headless → headless+cookies → interactive
+    2. web_fetch → headless → opencli → interactive → system_browser
     3. 成功后记录
     
     Args:
         url: 目标 URL
-        mode: 获取模式 ('auto', 'web_fetch', 'headless', 'interactive')
-        output_format: 输出格式 ('html', 'markdown', 'text')
+        mode: 获取模式 ('auto', 'web_fetch', 'headless', 'opencli', 'interactive', 'system_browser')
+        output_format: 输出格式 ('html', 'markdown', 'text', 'json')
         timeout: 超时时间（秒）
+        task_hint: 任务提示（interactive 模式横幅显示）
+        keep_open: 是否保持浏览器打开（interactive 模式）
+        keyword: 搜索关键词（opencli/system_browser 模式使用）
+        system_browser_mode: system_browser 等待方式 ('manual', 'auto')
+        extract_rules: CSS 选择器提取规则（system_browser 模式使用）
     
     Returns:
         {
             "success": bool,
-            "content": str,
+            "content": str/dict/list,
             "mode_used": str,
             "url": str,
             "title": str
@@ -820,6 +828,8 @@ def smart_fetch(
     print(f"\n{'='*60}")
     print(f"智能获取: {url}")
     print(f"模式: {mode}, 输出格式: {output_format}")
+    if keyword:
+        print(f"关键词: {keyword}")
     print(f"{'='*60}")
     
     domain = get_domain(url)
@@ -845,23 +855,38 @@ def smart_fetch(
                     html, _ = fetch_via_headless(url, timeout=timeout)
                     if html:
                         mode_used = 'headless'
+            elif hist_mode == 'opencli':
+                from .opencli_adapter import fetch_via_opencli
+                result = fetch_via_opencli(url, keyword=keyword, output_format=output_format, timeout=timeout)
+                if result and result.get("success"):
+                    return result
             elif hist_mode == 'interactive':
                 html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint, keep_open=keep_open)
                 if html:
                     mode_used = 'interactive'
+            elif hist_mode == 'system_browser':
+                from .system_browser import fetch_via_system_browser
+                result = fetch_via_system_browser(
+                    url, keyword=keyword,
+                    system_browser_mode=system_browser_mode,
+                    timeout=timeout, extract_rules=extract_rules
+                )
+                if result and result.get("success"):
+                    return result
             
             if not html:
                 print("[历史] 历史模式失败，重新尝试...")
     
-    # ---- 2. 按优先级尝试 ----
+    # ---- 2. 按优先级尝试（五层降级）----
     if not html:
         modes_to_try = []
         if mode == 'auto':
-            modes_to_try = ['web_fetch', 'headless', 'interactive']
+            modes_to_try = ['web_fetch', 'headless', 'opencli', 'interactive', 'system_browser']
         else:
             modes_to_try = [mode]
         
         for try_mode in modes_to_try:
+            # ── 第一层：web_fetch ──
             if try_mode == 'web_fetch':
                 html = fetch_via_web(url, timeout=min(timeout, 15))
                 if html and has_core_content(html):
@@ -869,6 +894,7 @@ def smart_fetch(
                     record_success(url, 'web_fetch', "静态页面，无需JS渲染")
                     break
             
+            # ── 第二层：headless ──
             elif try_mode == 'headless':
                 # 先尝试 cookie 复用
                 html, needs_login = fetch_via_headless_with_cookies(url, timeout=timeout)
@@ -884,21 +910,42 @@ def smart_fetch(
                     record_success(url, 'headless', "SPA应用，需JS渲染")
                     break
                 
-                # 如果检测到需要登录，且 interactive 在尝试列表中
-                if needs_login and 'interactive' in modes_to_try:
-                    print("[调度] 检测到登录需求，跳转到交互模式...")
-                    html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint, keep_open=keep_open)
-                    if html and has_core_content(html):
-                        mode_used = 'interactive'
-                        record_success(url, 'interactive', "需要登录或验证码验证")
-                        break
+                # 如果检测到需要登录，跳过后续 headless 尝试
+                if needs_login:
+                    print("[调度] 检测到登录需求，跳转到 opencli 或 interactive...")
             
+            # ── 第三层：opencli ──
+            elif try_mode == 'opencli':
+                from .opencli_adapter import fetch_via_opencli
+                result = fetch_via_opencli(
+                    url, keyword=keyword,
+                    output_format=output_format,
+                    timeout=timeout
+                )
+                if result and result.get("success"):
+                    record_success(url, 'opencli', "CLI结构化访问，秒级获取")
+                    return result
+                print("[调度] opencli 失败，降级到 interactive 模式")
+            
+            # ── 第四层：interactive ──
             elif try_mode == 'interactive':
                 html = fetch_via_interactive(url, timeout=timeout, task_hint=task_hint, keep_open=keep_open)
                 if html and has_core_content(html):
                     mode_used = 'interactive'
                     record_success(url, 'interactive', "需要登录或验证码验证")
                     break
+            
+            # ── 第五层：system_browser ──
+            elif try_mode == 'system_browser':
+                from .system_browser import fetch_via_system_browser
+                result = fetch_via_system_browser(
+                    url, keyword=keyword,
+                    system_browser_mode=system_browser_mode,
+                    timeout=timeout, extract_rules=extract_rules
+                )
+                if result and result.get("success"):
+                    record_success(url, 'system_browser', "系统浏览器人工交互模式")
+                    return result
     
     # ---- 3. 构建返回结果 ----
     if html:
