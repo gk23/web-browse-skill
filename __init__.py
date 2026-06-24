@@ -2,7 +2,7 @@
 Web-Browse Skill - 通用网页浏览工具
 
 用法:
-    from skills.web_browse import smart_fetch
+    from web_browse_skill import smart_fetch
     
     result = smart_fetch("https://example.com", mode="auto", output_format="html")
     print(result["content"])

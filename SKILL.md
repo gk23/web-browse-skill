@@ -51,7 +51,7 @@ web_fetch → headless → opencli → interactive → system_browser
 ## 快速使用
 
 ```python
-from web_browse import smart_fetch
+from web_browse_skill import smart_fetch
 
 # 获取任意网页内容（自动降级）
 result = smart_fetch("https://example.com", mode="auto", output_format="html")
@@ -80,26 +80,26 @@ result = smart_fetch(
 
 ```bash
 # 自动模式（五层自动降级）
-python -m skills.web_browse "https://example.com"
+python -m web_browse_skill "https://example.com"
 
 # 指定 opencli 模式
-python -m skills.web_browse "https://www.xiaohongshu.com/search_result?keyword=小升初" \
+python -m web_browse_skill "https://www.xiaohongshu.com/search_result?keyword=小升初" \
     --mode opencli --keyword "小升初" --output-format json
 
 # 指定交互模式（含登录横幅）
-python -m skills.web_browse "https://example.com" --mode interactive --timeout 180
+python -m web_browse_skill "https://example.com" --mode interactive --timeout 180
 
 # 指定系统浏览器模式
-python -m skills.web_browse "https://example.com" --mode system_browser --keyword "搜索词"
+python -m web_browse_skill "https://example.com" --mode system_browser --keyword "搜索词"
 
 # 查看历史记录
-python -m skills.web_browse --history
+python -m web_browse_skill --history
 ```
 
 ## 模块结构
 
 ```
-web-browse/
+web_browse_skill/
 ├── __init__.py          # 入口：smart_fetch
 ├── __main__.py          # CLI
 ├── core/

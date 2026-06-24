@@ -1,1 +1,1 @@
-# Core module for web-browse skill
+# Core module for web_browse_skill

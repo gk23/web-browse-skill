@@ -1,1 +1,1 @@
-# Utils module for web-browse skill
+# Utils module for web_browse_skill

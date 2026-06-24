@@ -1,1 +1,1 @@
-# Browser module for web-browse skill
+# Browser module for web_browse_skill

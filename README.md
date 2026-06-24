@@ -14,13 +14,13 @@
 将本目录放到 CodeBuddy 的 skills 目录下：
 
 ```
-~/.codebuddy/skills/web-browse/
+~/.codebuddy/skills/web_browse_skill/
 ```
 
 ## 使用
 
 ```python
-from web_browse import smart_fetch
+from web_browse_skill import smart_fetch
 
 result = smart_fetch("https://example.com", mode="auto")
 print(result["content"])
@@ -29,14 +29,14 @@ print(result["content"])
 CLI：
 
 ```bash
-python -m skills.web_browse "https://example.com"
-python -m skills.web_browse "https://example.com" --mode interactive --timeout 180
+python -m web_browse_skill "https://example.com"
+python -m web_browse_skill "https://example.com" --mode interactive --timeout 180
 ```
 
 ## 模块结构
 
 ```
-web-browse/
+web_browse_skill/
 ├── __init__.py          # 入口：smart_fetch
 ├── __main__.py          # CLI
 ├── SKILL.md             # 技能描述与触发条件

@@ -6,11 +6,11 @@ Web-Browse Skill CLI 入口
 用法:
     # 方式1: 从项目父目录用包名运行
     cd /path/to/skill_projects
-    python3 -m web_browse "https://example.com"
-    
-    # 方式2: 直接运行本文件（自动处理路径）
-    python3 /path/to/web-browse-skill/__main__.py "https://example.com"
-    
+    python3 -m web_browse_skill "https://example.com"
+
+    # 方式2: 直接运行本文件
+    python3 /path/to/web_browse_skill/__main__.py "https://example.com"
+
     # 选项:
     --mode headless --output-format markdown
     --history
@@ -27,32 +27,8 @@ _parent_dir = os.path.dirname(_this_dir)
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-# 包名映射: web-browse-skill 目录 -> web_browse 包
-# 需要确保 sys.path 中有 skill_projects 目录，且目录名合法
-# 由于目录名含连字符，需要特殊处理
-_pkg_name = os.path.basename(_this_dir).replace('-', '_')
-
-# 尝试导入
-try:
-    from web_browse.core.fetcher import smart_fetch
-    from web_browse.core.history import load_history, print_history
-except ImportError:
-    # 回退: 将当前目录也加入 path，用相对导入
-    if _this_dir not in sys.path:
-        sys.path.insert(0, _this_dir)
-    # 创建一个临时软链接或直接修改导入
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "web_browse", 
-        os.path.join(_this_dir, "__init__.py"),
-        submodule_search_locations=[_this_dir]
-    )
-    web_browse = importlib.util.module_from_spec(spec)
-    sys.modules["web_browse"] = web_browse
-    spec.loader.exec_module(web_browse)
-    
-    from web_browse.core.fetcher import smart_fetch
-    from web_browse.core.history import load_history, print_history
+from web_browse_skill.core.fetcher import smart_fetch
+from web_browse_skill.core.history import load_history, print_history
 
 
 def main():
@@ -86,7 +62,7 @@ def main():
     # 处理历史记录命令
     if args.clear_history:
         import os
-        from .core.history import HISTORY_FILE
+        from web_browse_skill.core.history import HISTORY_FILE
         if os.path.exists(HISTORY_FILE):
             os.remove(HISTORY_FILE)
             print("历史记录已清除")
